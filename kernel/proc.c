@@ -34,14 +34,14 @@ procinit(void)
       // Allocate a page for the process's kernel stack.
       // Map it high in memory, followed by an invalid
       // guard page.
-      char *pa = kalloc();
-      if(pa == 0)
-        panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
-      kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      p->kstack = va;
+      // char *pa = kalloc();
+      // if(pa == 0)
+      //   panic("kalloc");
+      // uint64 va = KSTACK((int) (p - proc));
+      // kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+      // p->kstack = va;
   }
-  kvminithart();
+  // kvminithart();
 }
 
 // Must be called with interrupts disabled,
@@ -121,6 +121,21 @@ found:
     return 0;
   }
 
+  // 初始化一个进程的内核页表
+  p->prockpt = prockptinit();
+  if(p->prockpt == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }  
+  
+  char *pa = kalloc();
+  if(pa == 0)
+    panic("kalloc");
+  uint64 va = KSTACK((int) (p - proc));
+  uvmmap(p->prockpt, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  p->kstack = va;
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -129,6 +144,26 @@ found:
 
   return p;
 }
+
+void
+freeprockpt(pagetable_t prockpt)
+{
+  // similar to the freewalk method
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++){
+    pte_t pte = prockpt[i];
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
+      // this PTE points to a lower-level page table.
+      uint64 child = PTE2PA(pte);
+      freeprockpt((pagetable_t)child);
+      prockpt[i] = 0;
+    } else if(pte & PTE_V){
+      continue;
+    }
+  }
+  kfree((void*)prockpt);
+}
+
 
 // free a proc structure and the data hanging from it,
 // including user pages.
@@ -143,6 +178,11 @@ freeproc(struct proc *p)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
   p->sz = 0;
+  if(p->prockpt){
+    uvmunmap(p->prockpt, p->kstack, 1, 1);
+    freeprockpt(p->prockpt);
+  }
+  p->prockpt = 0;
   p->pid = 0;
   p->parent = 0;
   p->name[0] = 0;
@@ -473,7 +513,12 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        uvminithart(p->prockpt);
+
         swtch(&c->context, &p->context);
+
+        kvminithart();
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
