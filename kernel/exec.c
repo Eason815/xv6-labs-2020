@@ -116,6 +116,11 @@ exec(char *path, char **argv)
   p->trapframe->sp = sp; // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
 
+  uvmunmap(p->prockpt, 0, PGROUNDUP(oldsz)/PGSIZE, 0);
+  if(u2kvmcopy(p->pagetable, p->prockpt, 0, p->sz) < 0){
+      goto bad;
+  }
+
   if(p->pid==1) {
     vmprint(p->pagetable);
   }
