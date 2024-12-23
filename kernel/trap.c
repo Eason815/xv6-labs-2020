@@ -81,8 +81,9 @@ usertrap(void)
   {
     if(p->interval != 0){
       p->ticks++;
-      if(p->ticks > p->interval){
-        p->ticks = 0;
+      if(p->ticks == p->interval){
+        p->trapframecopy = p->trapframe + 512;  
+        memmove(p->trapframecopy,p->trapframe,sizeof(struct trapframe));
         p->trapframe->epc = p->handler;
       }
     }
